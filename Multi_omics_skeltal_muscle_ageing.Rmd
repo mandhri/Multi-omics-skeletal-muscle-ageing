@@ -1,0 +1,91 @@
+---
+title: "meta_analysis_hf<=5_c"
+output: html_document
+date: "2023-07-14"
+---
+```{r packages, message=FALSE, warning=FALSE, echo=TRUE}
+suppressPackageStartupMessages({
+library("purrr")
+library("metafor")
+library("dplyr")
+library("readxl")
+library("ggplot2")
+library("tidyverse")
+library("readr")
+})
+```
+
+```{r , message=FALSE, warning=FALSE, echo=TRUE}
+skeletal_muscle<-read_delim("/mnt/vol1/EWAS_BACONNED/muscle/muscle/muscle_obese/metafor_muscle_HetDf>=2.txt")
+annotation<-read_csv("/mnt/vol1/annotation_latest_symbols_updated.csv")
+
+annotation <- annotation %>%
+  rename(CpG = probeID)
+
+dnam_annot <- skeletal_muscle %>%
+  inner_join(annotation, by = "CpG") %>%
+  filter(!is.na(gene_symbols), gene_symbols != "")
+
+# If gene_symbols has multiple genes separated by ; or ,
+dnam_long <- dnam_annot %>%
+  mutate(gene_symbols = gsub("\\s+", "", gene_symbols)) %>%
+  separate_rows(gene_symbols, sep = ";|,") %>%  
+  filter(gene_symbols != "")
+
+#Make the cpg counts in gene level
+dnam_gene <- dnam_long %>%
+  group_by(gene = gene_symbols) %>%
+  summarise(
+    n_cpg        = n(),
+    mean_ES_RE   = mean(ES_RE, na.rm = TRUE),
+    median_ES_RE = median(ES_RE, na.rm = TRUE),
+    min_pval     = min(pval_RE, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  mutate(
+    FDR_gene = p.adjust(min_pval, method = "BH")
+  )
+
+dnam_gene %>% arrange(FDR_gene) %>% head()
+dim(dnam_gene)
+
+
+write.csv(
+  dnam_gene,
+  "/mnt/vol1/Multi-omics-skeletal-muscle-ageing/dnam_muscle_age_genes.csv",
+  row.names = FALSE
+)
+
+# on promoter
+dnam_prom <- dnam_long %>%
+  filter(
+    is_promoter == 1 |
+      grepl("promoter", functional_category, ignore.case = TRUE) |
+      grepl("TSS", functional_category, ignore.case = TRUE)
+  )
+
+```
+
+```{r , message=FALSE, warning=FALSE, echo=TRUE}
+
+
+```
+
+```{r , message=FALSE, warning=FALSE, echo=TRUE}
+
+```
+
+
+```{r , message=FALSE, warning=FALSE, echo=TRUE}
+
+
+
+```
+
+```{r meta-analysis, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+```
+
+
+
