@@ -12,10 +12,15 @@ library("readxl")
 library("ggplot2")
 library("tidyverse")
 library("readr")
+library("DESeq2")
+
+  
+  
+  
 })
 ```
 
-```{r , message=FALSE, warning=FALSE, echo=TRUE}
+```{r DNAm, message=FALSE, warning=FALSE, echo=TRUE}
 skeletal_muscle<-read_delim("/mnt/vol1/EWAS_BACONNED/muscle/muscle/muscle_obese/metafor_muscle_HetDf>=2.txt")
 annotation<-read_csv("/mnt/vol1/annotation_latest_symbols_updated.csv")
 
@@ -56,22 +61,168 @@ write.csv(
   row.names = FALSE
 )
 
-# on promoter
-dnam_prom <- dnam_long %>%
-  filter(
-    is_promoter == 1 |
-      grepl("promoter", functional_category, ignore.case = TRUE) |
-      grepl("TSS", functional_category, ignore.case = TRUE)
+
+```
+
+```{r gtex, message=FALSE, warning=FALSE, echo=TRUE}
+
+# GTEx skeletal muscle counts (v8)
+if (! file.exists("/mnt/vol1/enrichment/ske/gene_reads_2017-06-05_v8_muscle_skeletal.gct.gz") ) {
+  download.file("https://storage.googleapis.com/adult-gtex/bulk-gex/v8/rna-seq/counts-by-tissue/gene_reads_2017-06-05_v8_muscle_skeletal.gct.gz",
+    destfile="/mnt/vol1/enrichment/ske/gene_reads_2017-06-05_v8_muscle_skeletal.gct.gz")
+}
+
+gtex_tisue <- read.table("/mnt/vol1/enrichment/ske/gene_reads_2017-06-05_v8_muscle_skeletal.gct.gz", header = TRUE, sep = "\t", skip = 2)
+
+gene_info <- gtex_tisue[, 1:2]
+expr_counts <- gtex_tisue[, -c(1, 2)]  
+expr_counts <- as.matrix(sapply(expr_counts, as.numeric))
+
+rownames(expr_counts) <- gene_info$Description
+expr_counts <- expr_counts[, colnames(expr_counts) != "Description"]
+
+dim(expr_counts) 
+expr_counts[1:3, 1:3]
+
+
+# Sample attributes
+if (!file.exists("/mnt/vol1/enrichment/ske/GTEx_Analysis_v8_Annotations_SampleAttributesDS.txt")) {
+  download.file(
+    "https://storage.googleapis.com/adult-gtex/annotations/v8/metadata-files/GTEx_Analysis_v8_Annotations_SampleAttributesDS.txt",
+    destfile = "/mnt/vol1/Multi-omics-skeletal-muscle-ageing/GTEx_sample_attr_file.txt"
+  )
+}
+
+# Subject phenotypes
+if (!file.exists("/mnt/vol1/enrichment/ske/GTEx_Analysis_v8_Annotations_SubjectPhenotypesDS.txt")) {
+  download.file(
+    "https://storage.googleapis.com/adult-gtex/annotations/v8/metadata-files/GTEx_Analysis_v8_Annotations_SubjectPhenotypesDS.txt",
+    destfile = "/mnt/vol1/Multi-omics-skeletal-muscle-ageing/GTEx_subject_pheno_file.txt"
+  )
+}
+
+sample_annot_gtex  <- read.delim("/mnt/vol1/Multi-omics-skeletal-muscle-ageing/GTEx_sample_attr_file.txt",  stringsAsFactors = FALSE)
+
+subject_annot_gtex <- read.delim("/mnt/vol1/Multi-omics-skeletal-muscle-ageing/GTEx_subject_pheno_file.txt", stringsAsFactors = FALSE)
+
+
+# Only Muscle - Skeletal samples
+sample_muscle <- sample_annot_gtex %>%
+  dplyr::filter(SMTSD == "Muscle - Skeletal")
+
+
+subject_annot_gtex <- subject_annot_gtex %>%
+  select(SUBJID, AGE, SEX)
+
+# Modify the column name and the row names of sample muscle
+
+sample_muscle <- sample_annot_gtex %>%
+  filter(SMTSD == "Muscle - Skeletal") %>%
+  mutate(
+    # donor ID = first two chunks of SAMPID, e.g. GTEX-1117F
+    SUBJID = vapply(
+      strsplit(SAMPID, "-"),
+      function(x) paste(x[1:2], collapse = "-"),
+      character(1)
+    )
   )
 
+subject_small <- subject_annot_gtex %>%
+  select(SUBJID, AGE, SEX)
+
+pheno_muscle <- sample_muscle %>%
+  left_join(subject_small, by = "SUBJID")
+
+pheno_muscle %>%
+  select(SAMPID, SUBJID, SMTSD, AGE, SEX) %>%
+  head()
+
+##
+colnames(expr_counts) <- gsub("\\.", "-", colnames(expr_counts))
+head(colnames(expr_counts))
+
+samples_expr <- colnames(expr_counts)
+pheno_muscle2 <- pheno_muscle %>%
+  filter(SAMPID %in% samples_expr)
+
+pheno_muscle2 <- pheno_muscle2[
+  match(samples_expr, pheno_muscle2$SAMPID),
+]
+
+
 ```
 
-```{r , message=FALSE, warning=FALSE, echo=TRUE}
+```{r rnaseq, message=FALSE, warning=FALSE, echo=TRUE}
+
+## Encode age (use ordinal code instead of midpoints if you prefer)
+pheno_muscle2 <- pheno_muscle2 %>%
+  mutate(
+    AGE_ord = as.numeric(factor(
+      AGE,
+      levels  = c("20-29","30-39","40-49","50-59","60-69","70-79"),
+      ordered = TRUE
+    ))
+  ) %>%
+  filter(!is.na(AGE_ord))
+
+# Align expression 
+expr_counts <- expr_counts[, pheno_muscle2$SAMPID]
+rownames(pheno_muscle2) <- pheno_muscle2$SAMPID
+pheno_muscle2$AGE_ord <- as.numeric(pheno_muscle2$AGE_ord)
+
+dds <- DESeqDataSetFromMatrix(
+  countData = expr_counts,    
+  colData   = pheno_muscle2,
+  design    = ~ AGE_ord
+)
+
+keep<- rowSums(counts(dds)) >= 10
+dds<- dds[keep, ]
+
+dds<- estimateSizeFactors(dds)
+norm_counts<- counts(dds, normalized = TRUE)
+glimpse(norm_counts)
+
+vsd<- vst(dds, blind = TRUE)
+vsd_mat       <- assay(vsd)
+vsd_mat_scaled <- t(scale(t(vsd_mat)))
+
+ann <- as.data.frame(colData(vsd))[, c("AGE"), drop = FALSE]
+ord_cols <- order(vsd$AGE_ord)
+
+# sample–sample correlation heatmap
+pheatmap::pheatmap(
+  cor(assay(vsd)),
+  annotation_col = ann,
+  annotation_row = ann
+)
 
 
-```
 
-```{r , message=FALSE, warning=FALSE, echo=TRUE}
+# Dispersion plot
+plotDispEsts(dds)
+
+# PCA by age band
+DESeq2::plotPCA(vsd, intgroup = c("AGE"))
+
+
+res_age <- results(dds, name = "AGE_ord", alpha = 0.05)
+plotMA(res_age)
+
+rna_gene <- as.data.frame(res_age) %>%
+  rownames_to_column("gene") %>%
+  transmute(
+    gene,
+    beta_age_rna = log2FoldChange,   # change per age band
+    p_rna        = pvalue,
+    FDR_rna      = padj
+  )
+
+write.csv(
+  rna_gene,
+  "/mnt/vol1/Multi-omics-skeletal-muscle-ageing/rna_muscle_age_genes_deseq.csv",
+  row.names = FALSE
+)
 
 ```
 
