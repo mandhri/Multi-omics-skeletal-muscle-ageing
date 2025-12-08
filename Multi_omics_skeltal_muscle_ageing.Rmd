@@ -72,17 +72,16 @@ if (! file.exists("/mnt/vol1/enrichment/ske/gene_reads_2017-06-05_v8_muscle_skel
     destfile="/mnt/vol1/enrichment/ske/gene_reads_2017-06-05_v8_muscle_skeletal.gct.gz")
 }
 
-gtex_tisue <- read.table("/mnt/vol1/enrichment/ske/gene_reads_2017-06-05_v8_muscle_skeletal.gct.gz", header = TRUE, sep = "\t", skip = 2)
+gtex_tisue <- read.table("/mnt/vol1/enrichment/ske/gene_reads_2017-06-05_v8_muscle_skeletal.gct.gz", header = TRUE, sep = "\t", skip = 2,check.names = FALSE)
 
 gene_info <- gtex_tisue[, 1:2]
-expr_counts <- gtex_tisue[, -c(1, 2)]  
-expr_counts <- as.matrix(sapply(expr_counts, as.numeric))
+expr_counts <- as.matrix(gtex_tisue[, -c(1, 2)])
 
-rownames(expr_counts) <- gene_info$Description
+rownames(expr_counts) <- gene_info$Name
+head(rownames(expr_counts))
+
 expr_counts <- expr_counts[, colnames(expr_counts) != "Description"]
-
-dim(expr_counts) 
-expr_counts[1:3, 1:3]
+head(colnames(expr_counts))
 
 
 # Sample attributes
@@ -137,9 +136,6 @@ pheno_muscle %>%
   select(SAMPID, SUBJID, SMTSD, AGE, SEX) %>%
   head()
 
-##
-colnames(expr_counts) <- gsub("\\.", "-", colnames(expr_counts))
-head(colnames(expr_counts))
 
 samples_expr <- colnames(expr_counts)
 pheno_muscle2 <- pheno_muscle %>%
@@ -154,37 +150,61 @@ pheno_muscle2 <- pheno_muscle2[
 
 ```{r rnaseq, message=FALSE, warning=FALSE, echo=TRUE}
 
-## Encode age (use ordinal code instead of midpoints if you prefer)
-pheno_muscle2 <- pheno_muscle2 %>%
-  mutate(
-    AGE_ord = as.numeric(factor(
-      AGE,
-      levels  = c("20-29","30-39","40-49","50-59","60-69","70-79"),
-      ordered = TRUE
-    ))
-  ) %>%
-  filter(!is.na(AGE_ord))
+ids_expr  <- colnames(expr_counts)
+ids_pheno <- pheno_muscle2$SAMPID
+common_ids <- intersect(ids_expr, ids_pheno)
+expr_counts_aligned  <- expr_counts[, common_ids]
+#Trim any stray spaces
+expr_counts_aligned <- trimws(expr_counts_aligned)
 
-# Align expression 
-expr_counts <- expr_counts[, pheno_muscle2$SAMPID]
-rownames(pheno_muscle2) <- pheno_muscle2$SAMPID
-pheno_muscle2$AGE_ord <- as.numeric(pheno_muscle2$AGE_ord)
+expr_counts_aligned <- matrix(
+  as.numeric(expr_counts_aligned),
+  nrow = nrow(expr_counts_aligned),
+  ncol = ncol(expr_counts_aligned),
+  dimnames = dimnames(expr_counts_aligned)
+)
+
+
+mode(expr_counts_aligned)
+
+summary(as.vector(expr_counts_aligned))[1:6]
+min(expr_counts_aligned, na.rm = TRUE)
+any(expr_counts_aligned < 0, na.rm = TRUE)
+
+
+pheno_muscle_aligned <- pheno_muscle2 %>%
+  dplyr::filter(SAMPID %in% common_ids) %>%
+  dplyr::arrange(match(SAMPID, common_ids))
+
+pheno_muscle_aligned$AGE_ord <- as.numeric(factor(
+  pheno_muscle_aligned$AGE,
+  levels  = c("20-29","30-39","40-49","50-59","60-69","70-79"),
+  ordered = TRUE
+))
+
+pheno_muscle_aligned <- pheno_muscle_aligned[!is.na(pheno_muscle_aligned$AGE_ord), ]
+
+rownames(pheno_muscle_aligned) <- pheno_muscle_aligned$SAMPID
 
 dds <- DESeqDataSetFromMatrix(
-  countData = expr_counts,    
-  colData   = pheno_muscle2,
+  countData = expr_counts_aligned,
+  colData   = pheno_muscle_aligned,
   design    = ~ AGE_ord
 )
 
+head(rownames(dds))
+
+
 keep<- rowSums(counts(dds)) >= 10
 dds<- dds[keep, ]
+dds <- DESeq(dds)
+plotDispEsts(dds)
 
-dds<- estimateSizeFactors(dds)
 norm_counts<- counts(dds, normalized = TRUE)
 glimpse(norm_counts)
 
 vsd<- vst(dds, blind = TRUE)
-vsd_mat       <- assay(vsd)
+vsd_mat<- assay(vsd)
 vsd_mat_scaled <- t(scale(t(vsd_mat)))
 
 ann <- as.data.frame(colData(vsd))[, c("AGE"), drop = FALSE]
@@ -198,10 +218,6 @@ pheatmap::pheatmap(
 )
 
 
-
-# Dispersion plot
-plotDispEsts(dds)
-
 # PCA by age band
 DESeq2::plotPCA(vsd, intgroup = c("AGE"))
 
@@ -213,7 +229,7 @@ rna_gene <- as.data.frame(res_age) %>%
   rownames_to_column("gene") %>%
   transmute(
     gene,
-    beta_age_rna = log2FoldChange,   # change per age band
+    beta_age_rna = log2FoldChange,  
     p_rna        = pvalue,
     FDR_rna      = padj
   )
@@ -227,8 +243,14 @@ write.csv(
 ```
 
 
-```{r , message=FALSE, warning=FALSE, echo=TRUE}
+```{r DNAM_RNA_MULTI, message=FALSE, warning=FALSE, echo=TRUE}
 
+dnam_gene <- read.csv("/mnt/vol1/Multi-omics-skeletal-muscle-ageing/dnam_muscle_age_genes.csv")
+rna_gene  <- read.csv("/mnt/vol1/Multi-omics-skeletal-muscle-ageing/rna_muscle_age_genes_deseq.csv")
+
+multi_dr <- inner_join(dnam_gene, rna_gene, by = "gene")
+
+cor(multi_dr$mean_ES_RE, multi_dr$beta_age_rna, use = "complete.obs")
 
 
 ```
