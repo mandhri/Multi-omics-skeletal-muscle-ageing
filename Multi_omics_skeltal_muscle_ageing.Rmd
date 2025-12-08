@@ -13,7 +13,9 @@ library("ggplot2")
 library("tidyverse")
 library("readr")
 library("DESeq2")
-
+library("dplyr")
+library("stringr")
+library("biomaRt")
   
   
   
@@ -243,19 +245,140 @@ write.csv(
 ```
 
 
-```{r DNAM_RNA_MULTI, message=FALSE, warning=FALSE, echo=TRUE}
+```{r DNAM_RNA_MULTI_p1, message=FALSE, warning=FALSE, echo=TRUE}
 
 dnam_gene <- read.csv("/mnt/vol1/Multi-omics-skeletal-muscle-ageing/dnam_muscle_age_genes.csv")
 rna_gene  <- read.csv("/mnt/vol1/Multi-omics-skeletal-muscle-ageing/rna_muscle_age_genes_deseq.csv")
 
-multi_dr <- inner_join(dnam_gene, rna_gene, by = "gene")
 
-cor(multi_dr$mean_ES_RE, multi_dr$beta_age_rna, use = "complete.obs")
+rna_gene2 <- rna_gene %>%
+  mutate(ensembl_id = str_replace(gene, "\\.\\d+$", ""))
+
+# biomaRt mapping (human)
+mart <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+
+map_tbl <- getBM(
+  attributes = c("ensembl_gene_id", "hgnc_symbol"),
+  filters    = "ensembl_gene_id",
+  values     = unique(rna_gene2$ensembl_id),
+  mart       = mart
+)
+
+rna_gene_annot <- rna_gene2 %>%
+  left_join(map_tbl, by = c("ensembl_id" = "ensembl_gene_id")) %>%
+  dplyr::filter(hgnc_symbol != "") %>%
+  dplyr::rename(gene_symbol = hgnc_symbol)
+
+dplyr::
+
+multi_gene <- dnam_gene %>%
+  dplyr::rename(gene_symbol = gene) %>%
+  inner_join(
+    rna_gene_annot %>%
+      dplyr::select(gene_symbol, beta_age_rna, p_rna, FDR_rna),
+    by = "gene_symbol"
+  )
 
 
 ```
 
-```{r meta-analysis, message=FALSE, warning=FALSE, echo=TRUE}
+
+ AIM 1: Across all overlapping genes, does methylation effect size correlate with expression effect size?
+ 
+ 
+ Result:
+
+Overall (0.124)
+* Across all overlapping genes, DNAm and RNA age effects are weakly but positively correlated.
+→ Only ~1.5% of the variance in RNA age effects is explained by DNAm age effects (0.124² ≈ 0.015).
+
+* DNAm-significant genes (0.071)
+Among genes with strong DNAm ageing, the correlation with RNA ageing is even smaller.
+→ Many DNAm age-hits don’t show clear expression changes in GTEx muscle.
+
+* RNA-significant genes (0.093)
+Similar story: genes with strong RNA ageing still only show a small trend with DNAm.
+
+* Both-significant genes (0.106)
+Even among “multi-omics hits”, coupling is modest. This is expected:
+
+** not all DNAm changes are regulatory,
+
+** many are in gene bodies/other contexts,
+
+** and RNA is noisier / affected by lots of other layers.
+
+* Any-significant (0.128)
+Basically the same as overall – reinforces that global DNAm–RNA coupling is weak.
+
+
+
+Final conclusion:
+
+Global: “Ageing methylation and expression changes are only weakly aligned in skeletal muscle (ρ ≈ 0.12).” This is also seen in other studies such as 
+https://pmc.ncbi.nlm.nih.gov/articles/PMC3954952/ 
+https://pmc.ncbi.nlm.nih.gov/articles/PMC8350206/ 
+
+Next: “Therefore, we focus on the subset of genes with strong evidence in one or both layers, and on pathways enriched for these multi-omics ageing genes.”
+
+```{r DNAM_RNA_MULTI_p, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+
+alpha <- 0.05
+
+multi_gene <- multi_gene %>%
+  mutate(
+    sig_dnam = FDR_gene < alpha,
+    sig_rna  = FDR_rna  < alpha
+  )
+
+cor_all      <- cor(multi_gene$mean_ES_RE, multi_gene$beta_age_rna, use = "complete.obs")
+cor_dnam_sig <- with(subset(multi_gene, sig_dnam), 
+                     cor(mean_ES_RE, beta_age_rna, use = "complete.obs"))
+cor_rna_sig  <- with(subset(multi_gene, sig_rna),
+                     cor(mean_ES_RE, beta_age_rna, use = "complete.obs"))
+cor_both_sig <- with(subset(multi_gene, sig_dnam & sig_rna),
+                     cor(mean_ES_RE, beta_age_rna, use = "complete.obs"))
+
+cor_all
+cor_dnam_sig
+cor_rna_sig
+cor_both_sig
+
+
+multi_gene <- multi_gene %>%
+  mutate(
+    category = case_when(
+      sig_dnam & sig_rna ~ "Both DNAm & RNA",
+      sig_dnam & !sig_rna ~ "DNAm only",
+      !sig_dnam & sig_rna ~ "RNA only",
+      TRUE ~ "Neither"
+    )
+  )
+
+ggplot(multi_gene, aes(x = mean_ES_RE, y = beta_age_rna, colour = category)) +
+  geom_point(alpha = 0.5, size = 1) +
+  theme_bw() +
+  labs(
+    x = "DNAm age effect size (mean_ES_RE)",
+    y = "RNA age effect size (beta_age_rna)",
+    colour = "Significance",
+    title = "Gene-level DNAm vs RNA age effects in skeletal muscle"
+  )
+
+
+multi_gene <- multi_gene %>%
+  mutate(
+    p_dnam   = pmin(min_pval, 0.05),
+    p_rna    = p_rna,
+    chisq    = -2 * (log(p_dnam) + log(p_rna)),
+    df       = 4,
+    p_joint  = pchisq(chisq, df = df, lower.tail = FALSE),
+    FDR_joint = p.adjust(p_joint, method = "BH")
+  )
+
+
 
 
 ```
