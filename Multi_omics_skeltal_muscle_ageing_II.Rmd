@@ -1,0 +1,132 @@
+---
+title: "meta_analysis_hf<=5_c"
+output: html_document
+date: "2023-07-14"
+---
+```{r packages, message=FALSE, warning=FALSE, echo=TRUE}
+suppressPackageStartupMessages({
+library("purrr")
+library("metafor")
+library("dplyr")
+library("readxl")
+library("ggplot2")
+library("tidyverse")
+library("readr")
+library("DESeq2")
+library("dplyr")
+library("stringr")
+library("biomaRt")
+  
+  
+  
+})
+
+
+```
+
+```{r DNAm, message=FALSE, warning=FALSE, echo=TRUE}
+
+protein_pheno<-
+
+
+
+```
+
+```{r gtex, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+
+```
+
+```{r rnaseq, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+```
+
+
+```{r DNAM_RNA_MULTI_p1, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+
+```
+
+
+ 
+
+```{r DNAM_RNA_MULTI_I, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+
+```
+
+
+
+```{r DNAM_RNA_MULTI_II, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+
+
+```
+
+
+
+
+```{r DNAM_RNA_MULTI_p, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+
+
+```
+
+
+```{r DNAM_RNA_MULTI_p, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+
+```
+
+```{r DNAM_RNA_MULTI_p, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+
+
+
+```
+
+
+```{r DNAM_RNA_MULTI_p, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+
+
+
+```
+
+
+```{r DNAM_RNA_MULTI_p, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+
+
+
+```
+
+
+
+```{r DNAM_RNA_MULTI_p, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+
+
+
+```
+
+
+```{r DNAM_RNA_MULTI_p, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+
+
+
+```
+
