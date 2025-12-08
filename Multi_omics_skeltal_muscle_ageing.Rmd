@@ -372,7 +372,9 @@ ggplot(multi_gene, aes(x = mean_ES_RE, y = beta_age_rna, colour = category)) +
 ```
 Aim 2 = characterise multi-omics ageing gene categories + directionality
 
-# significance and define categories
+# Significance and define categories
+
+Among 22,791 genes with both DNAm and RNA data, 9,446 (41.4%) were age-associated in both layers (FDR < 0.05), 6,441 (28.3%) only in DNAm, 2,273 (10.0%) only in RNA, and 4,631 (20.3%) were not significant in either modality.
 
 ```{r DNAM_RNA_MULTI_II, message=FALSE, warning=FALSE, echo=TRUE}
 
@@ -416,6 +418,9 @@ tab_cat
 
 Directionality within “both” genes
 
+Among the 9,446 genes significant in both DNAm and RNA, 3,778 (40.0%) showed an inverse relationship between DNAm and expression with age (Hyper+Down or Hypo+Up), whereas 5,668 (60.0%) showed same-direction changes (Hyper+Up or Hypo+Down), consistent with context-dependent effects of methylation on transcription.
+
+
 ```{r DNAM_RNA_MULTI_p, message=FALSE, warning=FALSE, echo=TRUE}
 
 multi_gene <- multi_gene %>%
@@ -442,6 +447,7 @@ table(multi_gene$dir_pair, useNA = "ifany")
 
 # Correlation by category
 
+The correlation between DNAm and RNA age effects was strongest among genes significant in both layers (Spearman ρ = 0.20), weaker among DNAm-only (ρ = 0.08) and RNA-only (ρ = 0.03) genes, and essentially null in genes not significant in either layer (ρ = −0.02). This indicates that the global DNAm–RNA coupling is driven primarily by a subset of multi-omics ageing genes
 
 ```{r DNAM_RNA_MULTI_p, message=FALSE, warning=FALSE, echo=TRUE}
 
@@ -455,20 +461,9 @@ cors_by_cat <- multi_gene %>%
 
 cors_by_cat
 
-ggplot(multi_gene,
-       aes(x = mean_ES_RE, y = beta_age_rna, colour = category)) +
-  geom_point(alpha = 0.5, size = 1) +
-  theme_bw(base_size = 14) +
-  labs(
-    x = "DNAm age effect size (mean_ES_RE)",
-    y = "RNA age effect size (beta_age_rna)",
-    colour = "Significance",
-    title = "Multi-omics ageing signatures per gene in skeletal muscle"
-  )
 
 
 ```
-
 
 ```{r DNAM_RNA_MULTI_p, message=FALSE, warning=FALSE, echo=TRUE}
 
@@ -488,6 +483,30 @@ ggplot(multi_gene,
 ```
 
 
+```{r DNAM_RNA_MULTI_p, message=FALSE, warning=FALSE, echo=TRUE}
 
 
+
+
+
+```
+
+
+
+```{r DNAM_RNA_MULTI_p, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+
+
+
+```
+
+
+```{r DNAM_RNA_MULTI_p, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+
+
+
+```
 
