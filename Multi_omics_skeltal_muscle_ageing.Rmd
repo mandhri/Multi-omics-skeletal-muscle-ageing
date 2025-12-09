@@ -465,48 +465,8 @@ cors_by_cat
 
 ```
 
-```{r DNAM_RNA_MULTI_p, message=FALSE, warning=FALSE, echo=TRUE}
 
-
-
-
-
-```
-
-
-```{r DNAM_RNA_MULTI_p, message=FALSE, warning=FALSE, echo=TRUE}
-
-
-
-
-
-```
-
-
-```{r DNAM_RNA_MULTI_p, message=FALSE, warning=FALSE, echo=TRUE}
-
-
-
-
-
-```
-
-
-
-```{r DNAM_RNA_MULTI_p, message=FALSE, warning=FALSE, echo=TRUE}
-
-
-
-
-
-```
-
-
-```{r DNAM_RNA_MULTI_p, message=FALSE, warning=FALSE, echo=TRUE}
-
-
-
-
-
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+sessionInfo()
 ```
 
