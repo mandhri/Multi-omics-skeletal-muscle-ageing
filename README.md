@@ -89,3 +89,30 @@ if (!require("BiocManager", quietly = TRUE))
     install.packages("BiocManager")
 
 BiocManager::install(c("DESeq2", "biomaRt"))
+
+## Repository Structure
+
+```
+---
+
+Repository Structure
+
+├── data/
+│   ├── raw/                  # GTEx .gct.gz files (downloaded by script if missing)
+│   ├── processed/            # Intermediate summary stats
+│   └── annotation/           # Probe mapping files
+├── results/
+│   ├── dnam_muscle_age_genes.csv
+│   ├── rna_muscle_age_genes_deseq.csv
+│   └── figures/              # Generated heatmaps and scatterplots
+├── scripts/
+│   └── meta_analysis_hf.Rmd  # Main analysis notebook
+└── README.md
+
+
+
+
+
+
+
+
