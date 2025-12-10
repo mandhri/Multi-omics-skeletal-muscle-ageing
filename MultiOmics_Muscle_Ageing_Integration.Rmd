@@ -1,0 +1,436 @@
+---
+title: "Integrated Multi-omics Analysis of Skeletal Muscle Ageing"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: cosmo
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+---
+
+# Introduction
+
+Skeletal muscle undergoes profound functional and biological changes during the ageing process. To understand the regulatory mechanisms driving these changes, this project integrates two distinct omics layers:
+
+1.  **DNA Methylation (DNAm):** Epigenetic modifications that can regulate gene accessibility.
+2.  **Gene Expression (RNA-seq):** The transcriptome level, reflecting the functional output of the genome.
+
+
+The primary goal is to determine the extent to which epigenetic changes (DNAm) correlate with transcriptomic changes (RNA) in ageing muscle. I hypothesise that while some genes show coordinated changes, the global coupling may be context-dependent.
+
+# Setup and Dependencies
+
+```{r packages, message=FALSE, warning=FALSE, echo=TRUE}
+suppressPackageStartupMessages({
+library("purrr")
+library("metafor")
+library("dplyr")
+library("readxl")
+library("ggplot2")
+library("tidyverse")
+library("readr")
+library("DESeq2")
+library("dplyr")
+library("stringr")
+library("biomaRt")
+  
+})
+```
+
+
+# Part 1: DNA Methylation Analysis
+
+I utilise summary statistics from a meta-analysis of skeletal muscle Epigenome-Wide Association Studies (EWAS). The probe-level data is aggregated to the gene level to allow for integration with RNA-seq data.
+
+
+```{r DNAm, message=FALSE, warning=FALSE, echo=TRUE}
+
+# Load meta-analysis results
+skeletal_muscle <- read_delim("/mnt/vol1/EWAS_BACONNED/muscle/muscle/muscle_obese/metafor_muscle_HetDf>=2.txt")
+annotation <- read_csv("/mnt/vol1/annotation_latest_symbols_updated.csv")
+
+# Standardise column names
+annotation <- annotation %>%
+  dplyr::rename(CpG = probeID)
+
+# Annotate probes with gene symbols
+dnam_annot <- skeletal_muscle %>%
+  inner_join(annotation, by = "CpG") %>%
+  filter(!is.na(gene_symbols), gene_symbols != "")
+
+# Handle multiple genes
+dnam_long <- dnam_annot %>%
+  mutate(gene_symbols = gsub("\\s+", "", gene_symbols)) %>%
+  separate_rows(gene_symbols, sep = ";|,") %>%  
+  filter(gene_symbols != "")
+
+# Aggregate CpG counts to Gene level
+dnam_gene <- dnam_long %>%
+  group_by(gene = gene_symbols) %>%
+  summarise(
+    n_cpg        = n(),
+    mean_ES_RE   = mean(ES_RE, na.rm = TRUE), # Mean Effect Size
+    median_ES_RE = median(ES_RE, na.rm = TRUE),
+    min_pval     = min(pval_RE, na.rm = TRUE) # Strongest signal per gene
+  ) %>%
+  ungroup() %>%
+  mutate(
+    FDR_gene = p.adjust(min_pval, method = "BH")
+  )
+
+# top ageing-associated genes
+dnam_gene %>% arrange(FDR_gene) %>% head()
+
+# Save processed DNAm data
+write.csv(
+  dnam_gene,
+  "/mnt/vol1/Multi-omics-skeletal-muscle-ageing/dnam_muscle_age_genes.csv",
+  row.names = FALSE
+)
+
+
+```
+
+# Part 2: RNA-seq Analysis (GTEx)
+
+Next, I analyse transcriptomic data from the GTEx v8 project. I specifically filter for "Muscle - Skeletal" samples to match the tissue context of my DNAm data.
+
+```{r gtex, message=FALSE, warning=FALSE, echo=TRUE}
+
+# Define paths
+
+gtex_counts_path <- "/mnt/vol1/enrichment/ske/gene_reads_2017-06-05_v8_muscle_skeletal.gct.gz"
+sample_attr_path <- "/mnt/vol1/Multi-omics-skeletal-muscle-ageing/GTEx_sample_attr_file.txt"
+subject_phen_path <- "/mnt/vol1/Multi-omics-skeletal-muscle-ageing/GTEx_subject_pheno_file.txt"
+
+# Download GTEx skeletal muscle counts (v8) if missing
+if (!file.exists(gtex_counts_path)) {
+  download.file(
+    "[https://storage.googleapis.com/adult-gtex/bulk-gex/v8/rna-seq/counts-by-tissue/gene_reads_2017-06-05_v8_muscle_skeletal.gct.gz](https://storage.googleapis.com/adult-gtex/bulk-gex/v8/rna-seq/counts-by-tissue/gene_reads_2017-06-05_v8_muscle_skeletal.gct.gz)",
+    destfile = gtex_counts_path
+  )
+}
+
+# Read Expression Data
+gtex_tissue <- read.table(gtex_counts_path, header = TRUE, sep = "\t", skip = 2, check.names = FALSE)
+gene_info   <- gtex_tissue[, 1:2]
+expr_counts <- as.matrix(gtex_tissue[, -c(1, 2)])
+rownames(expr_counts) <- gene_info$Name
+expr_counts <- expr_counts[, colnames(expr_counts) != "Description"]
+
+# Download Sample Attributes if missing
+if (!file.exists(sample_attr_path)) {
+  download.file(
+    "[https://storage.googleapis.com/adult-gtex/annotations/v8/metadata-files/GTEx_Analysis_v8_Annotations_SampleAttributesDS.txt](https://storage.googleapis.com/adult-gtex/annotations/v8/metadata-files/GTEx_Analysis_v8_Annotations_SampleAttributesDS.txt)",
+    destfile = sample_attr_path
+  )
+}
+
+# Download Subject Phenotypes if missing
+if (!file.exists(subject_phen_path)) {
+  download.file(
+    "[https://storage.googleapis.com/adult-gtex/annotations/v8/metadata-files/GTEx_Analysis_v8_Annotations_SubjectPhenotypesDS.txt](https://storage.googleapis.com/adult-gtex/annotations/v8/metadata-files/GTEx_Analysis_v8_Annotations_SubjectPhenotypesDS.txt)",
+    destfile = subject_phen_path
+  )
+}
+
+# Load Metadata
+sample_annot_gtex  <- read.delim(sample_attr_path, stringsAsFactors = FALSE)
+subject_annot_gtex <- read.delim(subject_phen_path, stringsAsFactors = FALSE)
+
+# Filter for Muscle - Skeletal samples only
+sample_muscle <- sample_annot_gtex %>%
+  dplyr::filter(SMTSD == "Muscle - Skeletal") %>%
+  mutate(
+    # Extract donor ID (e.g. GTEX-1117F) from sample ID
+    SUBJID = vapply(strsplit(SAMPID, "-"), function(x) paste(x[1:2], collapse = "-"), character(1))
+  )
+
+# Merge Sample and Subject data
+subject_small <- subject_annot_gtex %>% dplyr::select(SUBJID, AGE, SEX)
+pheno_muscle  <- sample_muscle %>% left_join(subject_small, by = "SUBJID")
+
+# Match Phenotypes to Expression matrix
+samples_expr  <- colnames(expr_counts)
+pheno_muscle2 <- pheno_muscle %>% filter(SAMPID %in% samples_expr)
+pheno_muscle2 <- pheno_muscle2[match(samples_expr, pheno_muscle2$SAMPID), ]
+
+
+```
+
+# Differential Expression Analysis (DESeq2)
+
+I model age as an ordinal variable (binned decades: 20-29 to 70-79) to identify genes that change consistently across the lifespan.
+
+
+```{r rnaseq, fig.width=7, fig.height=5, message=FALSE, warning=FALSE, echo=TRUE}
+
+# Align Expression and Phenotype data
+ids_expr   <- colnames(expr_counts)
+ids_pheno  <- pheno_muscle2$SAMPID
+common_ids <- intersect(ids_expr, ids_pheno)
+
+expr_counts_aligned <- expr_counts[, common_ids]
+expr_counts_aligned <- trimws(expr_counts_aligned)
+
+# Convert to numeric matrix
+expr_counts_aligned <- matrix(
+  as.numeric(expr_counts_aligned),
+  nrow = nrow(expr_counts_aligned),
+  ncol = ncol(expr_counts_aligned),
+  dimnames = dimnames(expr_counts_aligned)
+)
+
+# Prepare Phenotypes
+pheno_muscle_aligned <- pheno_muscle2 %>%
+  dplyr::filter(SAMPID %in% common_ids) %>%
+  dplyr::arrange(match(SAMPID, common_ids))
+
+# Create Ordinal Age Factor
+pheno_muscle_aligned$AGE_ord <- as.numeric(factor(
+  pheno_muscle_aligned$AGE,
+  levels  = c("20-29","30-39","40-49","50-59","60-69","70-79"),
+  ordered = TRUE
+))
+
+pheno_muscle_aligned <- pheno_muscle_aligned[!is.na(pheno_muscle_aligned$AGE_ord), ]
+rownames(pheno_muscle_aligned) <- pheno_muscle_aligned$SAMPID
+
+# Create DESeq2 Object
+dds <- DESeqDataSetFromMatrix(
+  countData = expr_counts_aligned,
+  colData   = pheno_muscle_aligned,
+  design    = ~ AGE_ord
+)
+
+# Filter low count genes and run DESeq
+keep <- rowSums(counts(dds)) >= 10
+dds  <- dds[keep, ]
+dds  <- DESeq(dds)
+
+# Variance Stabilising Transformation (for visualisation)
+vsd <- vst(dds, blind = TRUE)
+
+# Visualisation 1: Sample Heatmap 
+# Checks for clustering by age or potential outliers
+ann <- as.data.frame(colData(vsd))[, c("AGE"), drop = FALSE]
+pheatmap::pheatmap(
+  cor(assay(vsd)),
+  annotation_col = ann,
+  annotation_row = ann,
+  show_rownames = FALSE,
+  show_colnames = FALSE,
+  main = "Sample-Sample Correlation Matrix"
+)
+
+#  Visualisation 2: PCA Plot
+DESeq2::plotPCA(vsd, intgroup = c("AGE")) + 
+  ggtitle("PCA of Skeletal Muscle Transcriptome by Age")
+
+# Extract Results
+res_age <- results(dds, name = "AGE_ord", alpha = 0.05)
+plotMA(res_age, main = "MA Plot of Ageing Effects")
+
+rna_gene <- as.data.frame(res_age) %>%
+  rownames_to_column("gene") %>%
+  transmute(
+    gene,
+    beta_age_rna = log2FoldChange,  
+    p_rna        = pvalue,
+    FDR_rna      = padj
+  )
+
+write.csv(
+  rna_gene,
+  "/mnt/vol1/Multi-omics-skeletal-muscle-ageing/rna_muscle_age_genes_deseq.csv",
+  row.names = FALSE
+)
+
+```
+
+# Part 3: Multi-omics Integration
+
+I now integrate the processed DNAm and RNA-seq datasets. Since they use different identifiers, I map Ensembl IDs (RNA) to HGNC symbols (DNAm) using biomaRt.
+
+
+```{r DNAM_RNA_MULTI_p1, message=FALSE, warning=FALSE, echo=TRUE}
+
+dnam_gene <- read.csv("/mnt/vol1/Multi-omics-skeletal-muscle-ageing/dnam_muscle_age_genes.csv")
+rna_gene  <- read.csv("/mnt/vol1/Multi-omics-skeletal-muscle-ageing/rna_muscle_age_genes_deseq.csv")
+
+# Clean Ensembl IDs
+rna_gene2 <- rna_gene %>%
+  mutate(ensembl_id = str_replace(gene, "\\.\\d+$", ""))
+
+# Map IDs using biomaRt
+mart <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+map_tbl <- getBM(
+  attributes = c("ensembl_gene_id", "hgnc_symbol"),
+  filters    = "ensembl_gene_id",
+  values     = unique(rna_gene2$ensembl_id),
+  mart       = mart
+)
+
+rna_gene_annot <- rna_gene2 %>%
+  left_join(map_tbl, by = c("ensembl_id" = "ensembl_gene_id")) %>%
+  dplyr::filter(hgnc_symbol != "") %>%
+  dplyr::rename(gene_symbol = hgnc_symbol)
+
+# Merge datasets
+multi_gene <- dnam_gene %>%
+  dplyr::rename(gene_symbol = gene) %>%
+  inner_join(
+    rna_gene_annot %>%
+      dplyr::select(gene_symbol, beta_age_rna, p_rna, FDR_rna),
+    by = "gene_symbol"
+  )
+
+dim(multi_gene)
+
+```
+
+
+# Part 4: Analytical Findings
+
+## Aim 1: Global Coupling of Effect Sizes
+
+I first assess the global relationship: Does the magnitude of methylation change predict the magnitude of expression change?
+
+```{r DNAM_RNA_MULTI_I, fig.width=7, fig.height=5, message=FALSE, warning=FALSE, echo=TRUE}
+
+alpha <- 0.05
+
+# Flag significant genes
+multi_gene <- multi_gene %>%
+  mutate(
+    sig_dnam = FDR_gene < alpha,
+    sig_rna  = FDR_rna  < alpha,
+    category = case_when(
+      sig_dnam & sig_rna ~ "Both DNAm & RNA",
+      sig_dnam & !sig_rna ~ "DNAm only",
+      !sig_dnam & sig_rna ~ "RNA only",
+      TRUE ~ "Neither"
+    )
+  )
+
+# Calculate correlations
+cor_all      <- cor(multi_gene$mean_ES_RE, multi_gene$beta_age_rna, use = "complete.obs")
+cor_both_sig <- with(subset(multi_gene, sig_dnam & sig_rna), 
+                     cor(mean_ES_RE, beta_age_rna, use = "complete.obs"))
+
+# Display correlations
+list(
+  Global_Correlation = cor_all,
+  MultiOmics_Hits_Correlation = cor_both_sig
+)
+
+# Visualise the relationship
+ggplot(multi_gene, aes(x = mean_ES_RE, y = beta_age_rna, colour = category)) +
+  geom_point(alpha = 0.5, size = 1) +
+  geom_smooth(method = "lm", se = FALSE, color = "black", linetype = "dashed") +
+  labs(
+    x = "DNAm Age Effect Size (Mean ES)",
+    y = "RNA Age Effect Size (Log2FC)",
+    colour = "Significance Category",
+    title = "Gene-level DNAm vs RNA Age Effects in Skeletal Muscle",
+    subtitle = paste0("Global Spearman Correlation: ", round(cor_all, 3))
+  ) +
+  scale_color_brewer(palette = "Set1")
+
+
+```
+
+**Interpretation of Aim 1:**
+
+* **Negligible Global Coupling:** Across all overlapping genes, DNAm and RNA age effects are essentially uncorrelated (0.07). This suggests that globally, less than 1% of the variance (0.13) in RNA ageing is explained by methylation changes.
+* **Modest Coupling in Hits:** Even within the subset of "Multi-omics hits" (genes significant in both layers), the correlation remains weak but positive (0.13).
+* **Validation:** This finding aligns with other multi-omics ageing studies which also identified weak global concordance between methylation and expression changes in complex tissues:
+    * *Marten et al.* (PMC3954952)
+    * *Additional Reference* (PMC8350206)
+    
+
+
+## Aim 2: Characterising Multi-omics Ageing Signatures
+
+I focus on the subset of genes that are statistically significant in **both** layers (FDR < 0.05). I analyse their "Directionality" to determine if they follow canonical regulation.
+
+
+* **Canonical (Inverse):** Hypermethylation $\rightarrow$ Downregulation (or Hypo $\rightarrow$ Up).
+* **Non-Canonical (Same-Direction):** Hypermethylation $\rightarrow$ Upregulation (or Hypo $\rightarrow$ Down).
+
+```{r DNAM_RNA_MULTI_II, fig.width=7, fig.height=5, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+# Define directionality classes
+multi_gene <- multi_gene %>%
+  mutate(
+    direction_pair = case_when(
+      sig_dnam & sig_rna & mean_ES_RE > 0 & beta_age_rna > 0 ~ "Hyper + Up",
+      sig_dnam & sig_rna & mean_ES_RE > 0 & beta_age_rna < 0 ~ "Hyper + Down",
+      sig_dnam & sig_rna & mean_ES_RE < 0 & beta_age_rna > 0 ~ "Hypo + Up",
+      sig_dnam & sig_rna & mean_ES_RE < 0 & beta_age_rna < 0 ~ "Hypo + Down",
+      TRUE ~ "Other"
+    )
+  )
+
+# Summarise Categories
+tab_cat <- multi_gene %>%
+  dplyr::group_by(category) %>%
+  dplyr::summarise(Count = n(), .groups = "drop") %>%
+  dplyr::mutate(Proportion = round(Count / sum(Count), 3))
+
+print(tab_cat)
+
+# Summarise directionality in "Both" genes
+multi_gene %>%
+  filter(category == "Both DNAm & RNA") %>%
+  dplyr::count(direction_pair) %>%
+  mutate(Proportion = n / sum(n)) %>%
+  arrange(desc(n))
+
+```
+
+# Correlation by Category
+
+Finally, I calculate the correlation specifically within defined categories to see where the biological coupling is strongest.
+
+
+```{r DNAM_RNA_MULTI_pIII, fig.width=7, fig.height=5, message=FALSE, warning=FALSE, echo=TRUE}
+
+cors_by_cat <- multi_gene %>%
+  group_by(category) %>%
+  summarise(
+    n_genes = sum(!is.na(mean_ES_RE) & !is.na(beta_age_rna)),
+    cor_spearman = cor(mean_ES_RE, beta_age_rna, use = "complete.obs", method = "spearman")
+  ) %>%
+  arrange(desc(cor_spearman))
+
+cors_by_cat
+
+
+
+```
+
+# Interpretation of Aim 2:
+
+Stronger Local Coupling: The correlation rises to p = 0.20 among genes significant in both layers.
+
+Mixed Directionality: Approximately 40% of multi-omics hits show inverse (canonical) regulation, while 60% show same-direction changes. This is consistent with recent literature suggesting that DNA methylation in gene bodies or distal enhancers can positively regulate transcription.
+
+
+
+Conclusion
+In summary, this integrated analysis demonstrates that while skeletal muscle ageing involves widespread changes in both DNA methylation and gene expression, the two processes are not strictly coupled globally.
+
+Global uncoupling: Most age-associated DNAm changes do not result in linear gene expression changes.
+
+Context-dependence: Among genes that do change in both layers, non-canonical (positive) associations are more common than canonical silencing, highlighting the complexity of epigenetic regulation in ageing tissue.
+
+
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+sessionInfo()
+```
+
