@@ -107,7 +107,7 @@ Repository Structure
 │   ├── rna_muscle_age_genes_deseq.csv
 │   └── figures/              # Generated heatmaps and scatterplots
 ├── scripts/
-│   └── meta_analysis_hf.Rmd  # Main analysis notebook
+│   └── MultiOmics_Muscle_Ageing_Integration.Rmd  # Main analysis notebook
 └── README.md
 
 
