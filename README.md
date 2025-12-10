@@ -95,8 +95,9 @@ BiocManager::install(c("DESeq2", "biomaRt"))
 ```
 ---
 
+## Repository Structure
+
 ```
-Repository Structure
 
 ├── data/
 │   ├── raw/                  # GTEx .gct.gz files (downloaded by script if missing)
