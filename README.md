@@ -112,10 +112,4 @@ BiocManager::install(c("DESeq2", "biomaRt"))
 └── README.md
 
 
-
 ```
-
-
-
-
-
